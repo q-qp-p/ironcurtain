@@ -37,6 +37,7 @@ import type { ProviderKeyMapping } from './mitm-proxy.js';
 import { parseUpstreamBaseUrl, type ProviderConfig, type UpstreamTarget } from './provider-config.js';
 import { getInternalNetworkName } from './platform.js';
 import { cleanupContainers } from './container-lifecycle.js';
+import { clampDockerResources } from './resource-limits.js';
 import { errorMessage } from '../utils/error-message.js';
 import { createCachedStager } from '../skills/staging.js';
 import type { ResolvedSkill } from '../skills/types.js';
@@ -890,6 +891,12 @@ export async function createSessionContainers(
     // so we leave the container running as the baked codespace user
     // and skip the env vars entirely.
     const uidRemap = buildAgentUidRemap(core.useTcp);
+
+    // Resource ceilings come from userConfig (defaults: 8 GB / 4 cpus) and
+    // are clamped to fit the host. `null` in either field is preserved as
+    // "no flag emitted" (see clampDockerResources docs).
+    const { effective: containerResources } = clampDockerResources(config.userConfig.dockerResources);
+
     mainContainerId = await core.docker.create({
       image: core.image,
       name: mainContainerName,
@@ -899,7 +906,7 @@ export async function createSessionContainers(
       user: uidRemap.user,
       command: ['sleep', 'infinity'],
       ...bundleLabels,
-      resources: { memoryMb: 8192, cpus: 4 },
+      resources: { memoryMb: containerResources.memoryMb, cpus: containerResources.cpus },
       extraHosts,
       capAdd: [
         'SETUID', // sudo setuid

@@ -2576,9 +2576,11 @@ function hashWorkspaceRoot(hash: Hash, workspacePath: string): void {
 /**
  * Computes a SHA-256 hash of output artifacts or workspace root file metadata.
  *
- * When `outputNames` is non-empty, hashes declared artifact file contents.
- * When `outputNames` is empty, hashes workspace root file listing (paths + mtimes)
- * to detect code-only changes without reading file contents.
+ * Hashes file metadata (path + size + mtime) — never contents. This bounds cost
+ * regardless of artifact size (fuzz logs, captured stderr, etc. can be many GiB
+ * and would otherwise trip Node's 2 GiB `readFile` ceiling). Any agent rewrite
+ * via fs ops bumps mtime, and same-mtime-same-size collisions in a single ms
+ * window are not a concern for workflow change detection.
  */
 export function computeOutputHash(outputNames: readonly string[], artifactDir: string, workspacePath: string): string {
   const hash = createHash('sha256');
@@ -2588,8 +2590,8 @@ export function computeOutputHash(outputNames: readonly string[], artifactDir: s
       const dir = resolve(artifactDir, output);
       const files = collectFilesRecursive(dir);
       for (const file of files) {
-        hash.update(file.relativePath);
-        hash.update(readFileSync(file.fullPath));
+        const { size, mtimeMs } = statSync(file.fullPath);
+        hash.update(`${file.relativePath}:${size}:${mtimeMs}`);
       }
     }
   } else {

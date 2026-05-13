@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, utimesSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { SessionOptions } from '../../src/session/types.js';
@@ -604,6 +604,11 @@ describe('WorkflowOrchestrator', () => {
   it('detects stall when coder produces identical output twice', async () => {
     const defPath = writeDefinitionFile(tmpDir, stallDetectionDef);
     let coderCallCount = 0;
+    // Stall detection hashes artifact metadata (size + mtime). A real rewrite
+    // bumps mtime, so to model a true stall we pin both coder visits to the
+    // same fixed mtime. utimesSync truncates to whole-ms precision, so a
+    // round-trip from statSync.mtimeMs (often fractional ms) wouldn't match.
+    const FROZEN_MTIME = new Date('2024-01-01T00:00:00.000Z');
 
     const sessionFactory = vi.fn(async (opts: SessionOptions) => {
       const persona = opts.persona!;
@@ -611,12 +616,17 @@ describe('WorkflowOrchestrator', () => {
       let session: MockSession;
       if (persona === 'coder') {
         coderCallCount++;
-        // Both coder calls produce IDENTICAL artifacts -> same hash -> stall
-        session = createArtifactAwareSession(
-          [{ text: approvedResponse('coder output'), artifacts: ['code'] }],
-          tmpDir,
-          `coder-session-${coderCallCount}`,
-        );
+        const callId = coderCallCount;
+        session = new MockSession({
+          sessionId: `coder-session-${callId}`,
+          responses: () => {
+            const workflowDir = findWorkflowDir(tmpDir);
+            simulateArtifacts(workflowDir, ['code']);
+            const codePath = resolve(workflowDir, 'workspace', '.workflow', 'code', 'code.md');
+            utimesSync(codePath, FROZEN_MTIME, FROZEN_MTIME);
+            return approvedResponse('coder output');
+          },
+        });
       } else if (persona === 'reviewer') {
         // Reject to trigger second coder pass
         session = createArtifactAwareSession(

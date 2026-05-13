@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, readdirSync, existsSync, lstatSync, cpSync } from 'node:fs';
+import { readFileSync, mkdirSync, readdirSync, existsSync, lstatSync, statSync, cpSync } from 'node:fs';
 import { resolve, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { WorkflowId } from './types.js';
@@ -214,8 +214,8 @@ export class FileArtifactManager implements ArtifactManager {
       const dir = resolve(artifactDir, name);
       const files = collectFilesRecursive(dir);
       for (const file of files) {
-        hash.update(file.relativePath);
-        hash.update(readFileSync(file.fullPath));
+        const { size, mtimeMs } = statSync(file.fullPath);
+        hash.update(`${file.relativePath}:${size}:${mtimeMs}`);
       }
     }
 

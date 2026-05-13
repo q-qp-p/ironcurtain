@@ -177,10 +177,10 @@ describe('FileArtifactManager', () => {
       const specDir = resolve(artifactDir, 'spec');
       mkdirSync(specDir, { recursive: true });
 
-      writeFileSync(resolve(specDir, 'spec.md'), 'version 1');
+      writeFileSync(resolve(specDir, 'spec.md'), 'v1');
       const hash1 = manager.computeHash(workflowId, ['spec']);
 
-      writeFileSync(resolve(specDir, 'spec.md'), 'version 2');
+      writeFileSync(resolve(specDir, 'spec.md'), 'rewritten contents v2');
       const hash2 = manager.computeHash(workflowId, ['spec']);
 
       expect(hash1).not.toBe(hash2);

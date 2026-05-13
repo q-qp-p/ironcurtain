@@ -52,11 +52,11 @@ describe('computeOutputHash with nested directories', () => {
   it('detects changes in deeply nested files', () => {
     const codeDir = resolve(artifactDir, 'code');
     mkdirSync(resolve(codeDir, 'src', 'utils'), { recursive: true });
-    writeFileSync(resolve(codeDir, 'src', 'utils', 'helper.ts'), 'version 1');
+    writeFileSync(resolve(codeDir, 'src', 'utils', 'helper.ts'), 'v1');
 
     const hash1 = computeOutputHash(['code'], artifactDir, artifactDir);
 
-    writeFileSync(resolve(codeDir, 'src', 'utils', 'helper.ts'), 'version 2');
+    writeFileSync(resolve(codeDir, 'src', 'utils', 'helper.ts'), 'rewritten contents v2');
     const hash2 = computeOutputHash(['code'], artifactDir, artifactDir);
 
     expect(hash1).not.toBe(hash2);

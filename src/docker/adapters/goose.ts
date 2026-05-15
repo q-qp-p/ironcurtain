@@ -19,7 +19,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { AgentAdapter, AgentConfigFile, AgentId, AgentResponse, OrientationContext } from '../agent-adapter.js';
-import type { IronCurtainConfig } from '../../config/types.js';
+import type { DockerAuthKind, IronCurtainConfig } from '../../config/types.js';
 import type { ProviderConfig } from '../provider-config.js';
 import type { AuthMethod } from '../oauth-credentials.js';
 import type { ResolvedUserConfig, GooseProvider } from '../../config/user-config.js';
@@ -262,7 +262,7 @@ export function createGooseAdapter(userConfig?: ResolvedUserConfig): AgentAdapte
     },
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- interface requires authKind parameter
-    getProviders(_authKind?: 'oauth' | 'apikey'): readonly ProviderConfig[] {
+    getProviders(_authKind?: DockerAuthKind): readonly ProviderConfig[] {
       // Goose uses exactly one provider based on user config.
       // The authKind parameter is ignored because Goose does not support OAuth.
       return [getProviderConfig(gooseProvider)];

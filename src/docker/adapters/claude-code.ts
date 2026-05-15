@@ -20,7 +20,7 @@ import type {
   ConversationStateConfig,
   OrientationContext,
 } from '../agent-adapter.js';
-import type { IronCurtainConfig } from '../../config/types.js';
+import type { DockerAuthKind, IronCurtainConfig } from '../../config/types.js';
 import type { ProviderConfig } from '../provider-config.js';
 import type { ResolvedUserConfig } from '../../config/user-config.js';
 import { parseModelId } from '../../config/model-provider.js';
@@ -240,7 +240,7 @@ exit $STATUS
       return `${codeModePrompt}\n${dockerPrompt}`;
     },
 
-    getProviders(authKind?: 'oauth' | 'apikey'): readonly ProviderConfig[] {
+    getProviders(authKind?: DockerAuthKind): readonly ProviderConfig[] {
       if (authKind === 'oauth') {
         return [anthropicOAuthProvider, claudePlatformOAuthProvider];
       }

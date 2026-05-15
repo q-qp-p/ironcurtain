@@ -10,7 +10,7 @@
 
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { IronCurtainConfig } from '../config/types.js';
+import type { DockerAuthKind, IronCurtainConfig } from '../config/types.js';
 import type { AgentId } from '../docker/agent-adapter.js';
 import type { SessionMode } from './types.js';
 import {
@@ -143,8 +143,13 @@ export async function checkDockerAvailable(execFileFn: ProbeExecFileFn = execFil
 /** `anthropicOAuthOnly` is only meaningful for goose: it lets the goose
  *  error message tell a tester that present OAuth credentials are unusable. */
 interface CredentialState {
-  credKind: 'oauth' | 'apikey' | null;
+  credKind: DockerAuthKind | null;
   anthropicOAuthOnly: boolean;
+}
+
+/** Human-readable label for a resolved auth kind, used in the preflight banner. */
+function authKindLabel(kind: DockerAuthKind): string {
+  return kind === 'oauth' ? 'OAuth' : 'API key';
 }
 
 async function detectCredentialState(
@@ -167,7 +172,7 @@ async function detectCredentialState(
 
   const auth = await detectAuthMethod(config, sources);
   if (auth.kind === 'none') return { credKind: null, anthropicOAuthOnly: false };
-  return { credKind: auth.kind === 'oauth' ? 'oauth' : 'apikey', anthropicOAuthOnly: false };
+  return { credKind: auth.kind, anthropicOAuthOnly: false };
 }
 
 /**
@@ -239,10 +244,18 @@ function credentialErrorMessageForExplicit(agentId: AgentId, config: IronCurtain
       `--agent goose requires an API key for provider "${provider}". ` +
       'Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY, ' +
       'or configure via `ironcurtain config`.';
+    const parts: string[] = [base];
     if (provider === 'anthropic' && oauthOnly) {
-      return `${base}\n\nOAuth credentials are not usable with goose; provider "anthropic" requires an API key.`;
+      parts.push('OAuth credentials are not usable with goose; provider "anthropic" requires an API key.');
     }
-    return base;
+    if (provider === 'anthropic' && process.env.ANTHROPIC_AUTH_TOKEN) {
+      parts.push(
+        'Note: IronCurtain does not honor `ANTHROPIC_AUTH_TOKEN` (Bearer/gateway auth). ' +
+          'To route Anthropic traffic through a gateway, run LiteLLM as a sidecar and ' +
+          'point `ANTHROPIC_BASE_URL` at it with `ANTHROPIC_API_KEY` set to the LiteLLM key.',
+      );
+    }
+    return parts.join('\n\n');
   }
   return `--agent ${agentId} requires authentication. Log in with \`claude login\` (OAuth) or set ANTHROPIC_API_KEY.`;
 }
@@ -267,6 +280,14 @@ function credentialErrorMessageForPreferredMode(
     if (provider === 'anthropic' && oauthOnly) {
       lines.push('');
       lines.push('OAuth credentials are not usable with goose; provider "anthropic" requires an API key.');
+    }
+    if (provider === 'anthropic' && process.env.ANTHROPIC_AUTH_TOKEN) {
+      lines.push('');
+      lines.push(
+        'Note: IronCurtain does not honor `ANTHROPIC_AUTH_TOKEN` (Bearer/gateway auth). ' +
+          'To route Anthropic traffic through a gateway, run LiteLLM as a sidecar and ' +
+          'point `ANTHROPIC_BASE_URL` at it with `ANTHROPIC_API_KEY` set to the LiteLLM key.',
+      );
     }
   } else {
     lines.push(
@@ -316,7 +337,7 @@ export function formatModeLine(preflight: PreflightResult): string {
 interface DockerAgentMessages {
   dockerUnavailable: (detailedMessage: string) => string;
   credentialsMissing: (anthropicOAuthOnly: boolean) => string;
-  successReason: (authKind: 'oauth' | 'apikey') => string;
+  successReason: (authKind: DockerAuthKind) => string;
 }
 
 async function resolveDockerAgent(
@@ -384,7 +405,7 @@ async function resolveExplicit(
       `--agent ${agent} requires Docker, but it is not available:\n\n${detailedMessage}\n\n` +
       'Please fix your Docker installation or use the builtin agent.',
     credentialsMissing: (oauthOnly) => credentialErrorMessageForExplicit(agent, config, oauthOnly),
-    successReason: (authKind) => `Explicit --agent selection (${authKind === 'oauth' ? 'OAuth' : 'API key'})`,
+    successReason: (authKind) => `Explicit --agent selection (${authKindLabel(authKind)})`,
   });
 }
 
@@ -409,6 +430,6 @@ async function resolveDefaultMode(
   return resolveDockerAgent(agent, config, isDockerAvailable, credentialSources, {
     dockerUnavailable: dockerUnavailableMessage,
     credentialsMissing: (oauthOnly) => credentialErrorMessageForPreferredMode(agent, config, oauthOnly),
-    successReason: (authKind) => `${preferredDockerAgent} (${authKind === 'oauth' ? 'OAuth' : 'API key'})`,
+    successReason: (authKind) => `${preferredDockerAgent} (${authKindLabel(authKind)})`,
   });
 }

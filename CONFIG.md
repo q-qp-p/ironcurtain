@@ -96,13 +96,26 @@ Keys must match server names in `mcp-servers.json`. A warning is emitted for unm
 
 API keys can be set via environment variables (preferred) or in the config file. Environment variables take precedence.
 
-| Env Var                        | Config Field      | Description       |
-| ------------------------------ | ----------------- | ----------------- |
-| `ANTHROPIC_API_KEY`            | `anthropicApiKey` | Anthropic API key |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | `googleApiKey`    | Google AI API key |
-| `OPENAI_API_KEY`               | `openaiApiKey`    | OpenAI API key    |
+| Env Var                        | Config Field       | Description                                                                     |
+| ------------------------------ | ------------------ | ------------------------------------------------------------------------------- |
+| `ANTHROPIC_API_KEY`            | `anthropicApiKey`  | Anthropic API key                                                               |
+| `ANTHROPIC_BASE_URL`           | `anthropicBaseUrl` | Override the Anthropic upstream endpoint (typically paired with a LiteLLM key)  |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | `googleApiKey`     | Google AI API key                                                               |
+| `OPENAI_API_KEY`               | `openaiApiKey`     | OpenAI API key                                                                  |
 
 In Docker mode, IronCurtain auto-detects OAuth credentials from `~/.claude/.credentials.json` (created by `claude login`) and prefers them over API keys. Set `IRONCURTAIN_DOCKER_AUTH=apikey` to force API key mode.
+
+### Routing through a non-Anthropic gateway
+
+IronCurtain talks to Anthropic via the official SDK with `x-api-key` auth. To use OpenRouter or another non-Anthropic provider, run [LiteLLM](https://docs.litellm.ai/) as a local sidecar that translates Anthropic-format requests to your target provider, then point IronCurtain at it:
+
+```bash
+export ANTHROPIC_API_KEY="<your-litellm-virtual-key>"
+export ANTHROPIC_BASE_URL="http://127.0.0.1:4000"
+ironcurtain start "your task"
+```
+
+LiteLLM handles model-name translation (e.g. mapping `claude-sonnet-4-6` to your chosen OpenRouter / Bedrock / OpenAI model). See LiteLLM's docs for sidecar setup.
 
 ## Memory
 

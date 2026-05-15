@@ -14,6 +14,9 @@ import {
 const ENV_VARS_TO_ISOLATE = [
   'IRONCURTAIN_HOME',
   'ANTHROPIC_API_KEY',
+  'ANTHROPIC_BASE_URL',
+  'OPENAI_BASE_URL',
+  'GOOGLE_API_BASE_URL',
   'GOOGLE_GENERATIVE_AI_API_KEY',
   'OPENAI_API_KEY',
 ] as const;
@@ -257,6 +260,40 @@ describe('loadUserConfig', () => {
     const config = loadUserConfig();
 
     expect(config.openaiApiKey).toBe('from-env');
+  });
+
+  // --- Base URL env var validation ---
+
+  it('throws when ANTHROPIC_BASE_URL is malformed', () => {
+    // The schema validates `anthropicBaseUrl` from the config file via
+    // `z.url()`; the env override must apply the same rule rather than
+    // accepting whatever string is in the environment. Without this guard,
+    // a typo'd env var would surface as an opaque fetch failure mid-session.
+    process.env.ANTHROPIC_BASE_URL = 'not-a-url';
+    expect(() => loadUserConfig()).toThrow(/ANTHROPIC_BASE_URL/);
+  });
+
+  it('throws when OPENAI_BASE_URL is malformed', () => {
+    process.env.OPENAI_BASE_URL = 'definitely-not-a-url';
+    expect(() => loadUserConfig()).toThrow(/OPENAI_BASE_URL/);
+  });
+
+  it('throws when GOOGLE_API_BASE_URL is malformed', () => {
+    process.env.GOOGLE_API_BASE_URL = '://broken';
+    expect(() => loadUserConfig()).toThrow(/GOOGLE_API_BASE_URL/);
+  });
+
+  it('accepts a well-formed ANTHROPIC_BASE_URL env var', () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://openrouter.ai/anthropic';
+    const config = loadUserConfig();
+    expect(config.anthropicBaseUrl).toBe('https://openrouter.ai/anthropic');
+  });
+
+  it('leaves anthropicBaseUrl as the config-file value when ANTHROPIC_BASE_URL is empty', () => {
+    writeConfigFile({ anthropicBaseUrl: 'https://example.invalid/anthropic' });
+    delete process.env.ANTHROPIC_BASE_URL;
+    const config = loadUserConfig();
+    expect(config.anthropicBaseUrl).toBe('https://example.invalid/anthropic');
   });
 
   // --- Qualified model ID validation ---

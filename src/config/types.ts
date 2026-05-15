@@ -1,6 +1,13 @@
 import type { ResolvedUserConfig } from './user-config.js';
 
 /**
+ * Auth kinds an adapter may receive. Subset of `AuthMethod['kind']` from
+ * `docker/oauth-credentials.ts` minus `'none'`: by the time an adapter is
+ * consulted, a credential has been resolved.
+ */
+export type DockerAuthKind = 'oauth' | 'apikey';
+
+/**
  * Network access configuration for a sandboxed MCP server.
  *
  * Invariant: when `allowedDomains` is empty, no network access is permitted.
@@ -112,7 +119,7 @@ export interface IronCurtainConfig {
    * Set by prepareDockerInfrastructure() after detecting credentials.
    * Adapters use this to choose between OAuth and API key env vars.
    */
-  dockerAuth?: { readonly kind: 'oauth' | 'apikey' };
+  dockerAuth?: { readonly kind: DockerAuthKind };
   /**
    * Whether this is a PTY session. When true, the proxy requires
    * trusted input source ("mux-trusted-input") for auto-approval.

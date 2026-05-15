@@ -6,7 +6,7 @@
  * config format, system prompt injection, and output parsing.
  */
 
-import type { IronCurtainConfig } from '../config/types.js';
+import type { DockerAuthKind, IronCurtainConfig } from '../config/types.js';
 import type { ProviderConfig } from './provider-config.js';
 import type { ServerListing } from '../types/server-listing.js';
 import type { AuthMethod } from './oauth-credentials.js';
@@ -235,7 +235,7 @@ export interface AgentAdapter {
    * @param authKind - When 'oauth', returns providers configured for bearer
    *   token injection instead of header-based API key injection.
    */
-  getProviders(authKind?: 'oauth' | 'apikey'): readonly ProviderConfig[];
+  getProviders(authKind?: DockerAuthKind): readonly ProviderConfig[];
 
   /**
    * Constructs environment variables for the container.

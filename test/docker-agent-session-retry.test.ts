@@ -219,6 +219,56 @@ describe('DockerAgentSession retry path', () => {
     expect(flagValue(calls[1], '--resume')).toBeUndefined();
   });
 
+  it('after a partial-failure turn (exit!=0 with non-empty stdout), the next call uses --resume', async () => {
+    // Regression: the Anthropic-API-400-mid-stream class produces exit=1 with
+    // partial assistant text already on stdout AND a session JSONL on disk.
+    // Previously the gate was `exit === 0` only, so the retry re-emitted
+    // `--session-id <same-uuid>` and Claude Code rejected it with
+    // "Session ID is already in use" (the flag is create-only). The current
+    // gate also flips on any non-empty stdout, so the retry uses `--resume`.
+    const { exec, calls } = scriptedExec([
+      { exitCode: 1, stdout: 'partial assistant output', stderr: '' },
+      { exitCode: 0, stdout: CLAUDE_JSON_OK, stderr: '' },
+    ]);
+    const deps = buildDeps(tempDir, exec);
+    session = new DockerAgentSession(deps);
+    await session.initialize();
+
+    await session.sendMessageDetailed('attempt 1');
+    await session.sendMessageDetailed('attempt 2');
+
+    expect(flagValue(calls[0], '--session-id')).toBe(deps.agentConversationId);
+    expect(flagValue(calls[0], '--resume')).toBeUndefined();
+    expect(flagValue(calls[1], '--resume')).toBe(deps.agentConversationId);
+    expect(flagValue(calls[1], '--session-id')).toBeUndefined();
+  });
+
+  it('whitespace-only stdout on a hard failure does NOT flip firstTurnComplete', async () => {
+    // The gate uses `stdout.trim().length > 0` so the adapter's hard-failure
+    // definition (also `.trim().length === 0`) agrees: a CLI that prints only
+    // newlines/spaces before dying is still a hard failure that needs
+    // rotateAgentConversationId() to mint a fresh UUID. If the gate flipped
+    // on whitespace, the orchestrator's rotation would happen but the next
+    // call would have used --resume against a never-materialized JSONL.
+    const { exec, calls } = scriptedExec([
+      { exitCode: 143, stdout: '   \n  \t\n', stderr: '' },
+      { exitCode: 0, stdout: CLAUDE_JSON_OK, stderr: '' },
+    ]);
+    const deps = buildDeps(tempDir, exec);
+    session = new DockerAgentSession(deps);
+    await session.initialize();
+
+    const first = await session.sendMessageDetailed('attempt 1');
+    expect(first.hardFailure).toBe(true);
+
+    session.rotateAgentConversationId();
+    await session.sendMessageDetailed('attempt 2');
+
+    expect(flagValue(calls[1], '--session-id')).toBeDefined();
+    expect(flagValue(calls[1], '--session-id')).not.toBe(deps.agentConversationId);
+    expect(flagValue(calls[1], '--resume')).toBeUndefined();
+  });
+
   it('after a successful turn, subsequent calls use --resume with the same UUID', async () => {
     const { exec, calls } = scriptedExec([
       { exitCode: 0, stdout: CLAUDE_JSON_OK, stderr: '' },
@@ -262,6 +312,39 @@ describe('DockerAgentSession retry path', () => {
     expect(result.hardFailure).toBe(false);
     expect(result.quotaExhausted).toBeUndefined();
     expect(result.text).toBe('preamble only');
+  });
+
+  it('forwards transientFailure from an upstream 5xx envelope (exit=1, api_error_status=500)', async () => {
+    // Mirrors the degenerate_response plumbing test above for the new
+    // upstream_5xx detection: after the SDK exhausts its 3 internal
+    // retries against a transient Anthropic 5xx, the CLI emits a
+    // `type: 'result'` envelope with `api_error_status: 500` and exits
+    // non-zero. The session must surface the structured signal through
+    // sendMessageDetailed so the orchestrator short-circuits instead of
+    // burning its retry budget against a still-broken upstream.
+    const upstream5xxEnvelope = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      api_error_status: 500,
+      result:
+        'API Error: 500 Internal server error. This is a server-side issue, usually temporary — try again in a moment.',
+      stop_reason: 'stop_sequence',
+      usage: { input_tokens: 0, output_tokens: 0 },
+    });
+    const { exec } = scriptedExec([{ exitCode: 1, stdout: upstream5xxEnvelope, stderr: '' }]);
+    const deps = buildDeps(tempDir, exec);
+    session = new DockerAgentSession(deps);
+    await session.initialize();
+
+    const result = await session.sendMessageDetailed('do the thing');
+
+    expect(result.transientFailure).toBeDefined();
+    expect(result.transientFailure!.kind).toBe('upstream_5xx');
+    expect(result.transientFailure!.rawMessage).toContain('api_error_status');
+    expect(result.hardFailure).toBe(false);
+    expect(result.quotaExhausted).toBeUndefined();
+    expect(result.text).toContain('API Error: 500');
   });
 
   it('sendMessage delegates to sendMessageDetailed and returns just the text', async () => {

@@ -308,10 +308,18 @@ export class DockerAgentSession implements Session {
       };
       this.turns.push(turn);
 
-      // Only mark the first turn as complete on success. On a failed turn
-      // (non-zero exit), the agent may not have created the session yet, so
-      // the next turn must still pin a fresh session id rather than resume.
-      if (exitCode === 0) {
+      // Mark the first turn complete whenever the agent CLI produced any
+      // non-whitespace stdout. Claude Code's `--session-id` is a create-only
+      // flag — the CLI rejects the next call with "Session ID is already in
+      // use" if the transcript JSONL on disk already exists. Any real stdout
+      // proves the session got far enough for the CLI to materialize that
+      // JSONL, even if the run ultimately exited non-zero (e.g. Anthropic
+      // API 400 mid-stream). The next turn must therefore use `--resume`
+      // rather than re-pinning the same id. The whitespace-trimmed check
+      // matches `extractResponse`'s hard-failure definition (stdout.trim()
+      // empty); hard failures still route through rotateAgentConversationId()
+      // at the orchestrator layer.
+      if (exitCode === 0 || stdout.trim().length > 0) {
         this.firstTurnComplete = true;
       }
 

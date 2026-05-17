@@ -69,12 +69,21 @@ export interface AgentResponse {
    * its JSON parses, but no assistant message was generated.
    *
    * Shaped as a discriminated union (`kind`) so future detected shapes
-   * (`'connection_reset'`, `'5xx_passthrough'`, etc.) can extend without
-   * a breaking change. Mirrors the contract of `quotaExhausted`: the
-   * orchestrator MUST treat this as terminal-but-resumable, MUST NOT
-   * retry the turn (the in-loop reprompt against a stalled upstream is
-   * hopeless), and MUST preserve the checkpoint so `workflow resume`
-   * can re-enter the failing state once the upstream is healthy.
+   * (`'connection_reset'`, etc.) can extend without a breaking change.
+   * Current kinds:
+   *   - `'degenerate_response'`: exit=0, output_tokens=0, stop_reason=null
+   *     (sustained LiteLLM/Z.AI stall surfaced as an empty completion).
+   *   - `'upstream_5xx'`: Claude Code's `api_error_status: 5xx` envelope,
+   *     emitted after the SDK exhausts its internal retries against a
+   *     transient provider 5xx (e.g. mid-SSE-stream abort during an
+   *     Anthropic outage). The CLI exits non-zero with a synthetic
+   *     `result` string ("API Error: 500 Internal server error. ...").
+   *
+   * Mirrors the contract of `quotaExhausted`: the orchestrator MUST
+   * treat this as terminal-but-resumable, MUST NOT retry the turn (the
+   * in-loop reprompt against a stalled upstream is hopeless), and MUST
+   * preserve the checkpoint so `workflow resume` can re-enter the
+   * failing state once the upstream is healthy.
    *
    * `rawMessage` is the original envelope/stdout, preserved for
    * diagnostics. Adapters that cannot produce this signal must leave
@@ -83,9 +92,30 @@ export interface AgentResponse {
    * signal.
    */
   readonly transientFailure?: {
-    readonly kind: 'degenerate_response';
+    readonly kind: TransientFailureKind;
     readonly rawMessage: string;
   };
+}
+
+/**
+ * Discriminant for the `transientFailure.kind` field. Exported as a single
+ * source of truth so adding a new kind only requires editing one file.
+ */
+export type TransientFailureKind = 'degenerate_response' | 'upstream_5xx';
+
+/**
+ * Human-readable description of a transient-failure kind, used in
+ * user-facing terminal-status text and error messages. Centralized so
+ * adding a new kind forces an exhaustive switch update (TypeScript
+ * errors here if the kind is unhandled).
+ */
+export function describeTransientFailureKind(kind: TransientFailureKind): string {
+  switch (kind) {
+    case 'degenerate_response':
+      return 'agent returned no content (output_tokens=0, stop_reason=null)';
+    case 'upstream_5xx':
+      return 'upstream returned a 5xx error after SDK retries exhausted';
+  }
 }
 
 /**

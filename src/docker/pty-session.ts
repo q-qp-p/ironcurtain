@@ -29,7 +29,7 @@ import { PTY_SOCK_NAME, DEFAULT_PTY_PORT } from './pty-types.js';
 import type { PtySessionRegistration, SessionSnapshot } from './pty-types.js';
 import { createEscalationWatcher, atomicWriteJsonSync } from '../escalation/escalation-watcher.js';
 import type { EscalationWatcher } from '../escalation/escalation-watcher.js';
-import { getSessionDir, getPtyRegistryDir, SESSION_STATE_FILENAME } from '../config/paths.js';
+import { getSessionDir, getSessionCapturesDir, getPtyRegistryDir, SESSION_STATE_FILENAME } from '../config/paths.js';
 import * as logger from '../logger.js';
 import { buildDockerClaudeMd } from './claude-md-seed.js';
 import { getInternalNetworkName } from './platform.js';
@@ -46,6 +46,12 @@ export interface PtySessionOptions {
   readonly resumeSessionId?: string;
   /** Persona name. Used to build CLAUDE.md and system prompt augmentation. */
   readonly persona?: string;
+  /**
+   * Trajectory-capture override: CLI flag wins over `userConfig.capture.enabled`.
+   * `true` forces capture on for this run, `undefined` falls through to config.
+   * See docs/designs/mitm-token-trajectory-capture.md §10.
+   */
+  readonly captureTracesOverride?: boolean;
   /**
    * Override for the PTY attach step. Defaults to the production `attachPty`
    * which proxies the user's terminal into the container PTY socket.
@@ -257,6 +263,13 @@ export async function runPtySession(options: PtySessionOptions): Promise<void> {
   let docker: Awaited<ReturnType<typeof prepareDockerInfrastructure>>['docker'] | null = null;
   let useTcp: boolean;
   let networkName: string | null = null;
+  // Flushes the trajectory-capture session (clean, non-poisoned session-end)
+  // before infra teardown. Assigned inside the try once the bundle exists;
+  // invoked in finally. Undefined when capture is disabled. PTY mode tears
+  // down proxies manually (it does not call destroyDockerInfrastructure), so
+  // this explicit flush is required for a clean capture — the destroy-time
+  // safety net does not run here.
+  let flushCapture: (() => Promise<void>) | undefined;
   let ptyExitCode: number | null = null;
   let adapterIdForSnapshot: string | null = null;
   let adapterDisplayNameForSnapshot: string | null = null;
@@ -275,6 +288,9 @@ export async function runPtySession(options: PtySessionOptions): Promise<void> {
     // this keeps the deterministic `ironcurtain-pty-<id[0:12]>` container
     // name that prior-crash recovery depends on.
     const bundleId = effectiveSessionId as BundleId;
+    // Trajectory-capture: pass the RAW override; the infra layer is the
+    // single place that resolves it against userConfig. The writer is
+    // constructed only when enabled — zero cost when disabled.
     const infra = await prepareDockerInfrastructure(
       sessionConfig,
       options.mode,
@@ -285,10 +301,38 @@ export async function runPtySession(options: PtySessionOptions): Promise<void> {
       undefined,
       undefined,
       dirConfig.resolvedSkills,
+      {
+        override: options.captureTracesOverride,
+        capturesDir: getSessionCapturesDir(effectiveSessionId),
+        recordedAgentName: options.mode.agent,
+      },
     );
     // PTY sessions are standalone: pin the MITM proxy's token-stream
     // routing ID to this session's ID for the session's lifetime.
-    infra.setTokenSessionId(effectiveSessionId as import('../session/types.js').SessionId);
+    const captureSessionId = effectiveSessionId as import('../session/types.js').SessionId;
+    infra.setTokenSessionId(captureSessionId);
+
+    // Begin trajectory capture (no-op when disabled). Standalone PTY runs
+    // exactly one session through the bundle. The matching flush is in the
+    // finally block, awaited BEFORE proxy teardown (§11 ordering) so the
+    // session-end manifest entry is durable. PTY mode does not call
+    // destroyDockerInfrastructure, so we both end the session (clean,
+    // non-poisoned end) and close the writer here.
+    infra.beginCaptureSession({ sessionId: captureSessionId });
+    if (infra.captureWriter) {
+      flushCapture = async () => {
+        await infra
+          .endCaptureSession(captureSessionId)
+          .catch((err: unknown) =>
+            logger.warn(`PTY capture endSession failed: ${err instanceof Error ? err.message : String(err)}`),
+          );
+        await infra.captureWriter
+          ?.close()
+          .catch((err: unknown) =>
+            logger.warn(`PTY capture writer close failed: ${err instanceof Error ? err.message : String(err)}`),
+          );
+      };
+    }
 
     ({ docker, proxy, mitmProxy, useTcp } = infra);
     const {
@@ -628,6 +672,12 @@ export async function runPtySession(options: PtySessionOptions): Promise<void> {
       } catch {
         /* best effort */
       }
+    }
+
+    // Flush trajectory capture before proxy teardown so the session-end
+    // manifest entry is durable (§11). No-op when capture is disabled.
+    if (flushCapture) {
+      await flushCapture();
     }
 
     if (docker) {

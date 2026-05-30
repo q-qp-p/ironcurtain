@@ -27,6 +27,7 @@ import {
   SESSION_METADATA_FILENAME,
 } from '../config/paths.js';
 import { validatePolicyDir as sharedValidatePolicyDir } from '../config/validate-policy-dir.js';
+import { getSessionCapturesDir } from '../config/paths.js';
 import type { IronCurtainConfig } from '../config/types.js';
 import * as logger from '../logger.js';
 import { resolvePersona, applyServerAllowlist, filterMcpServersByPolicy } from '../persona/resolve.js';
@@ -283,18 +284,10 @@ async function createDockerSession(
       // name for prior-crash recovery.
       const bundleId = bundleIdFromSessionId(sessionId);
       const { createDockerInfrastructure } = await import('../docker/docker-infrastructure.js');
-      // Trajectory-capture resolution: CLI / RPC override > userConfig > false.
-      // See docs/designs/mitm-token-trajectory-capture.md §10. Writer is
-      // only constructed when enabled — zero cost when disabled.
-      const captureEnabled = options.captureTracesOverride ?? sessionConfig.config.userConfig.capture?.enabled ?? false;
-      const { getSessionCapturesDir } = await import('../config/paths.js');
-      const captureOptions = captureEnabled
-        ? {
-            enabled: true,
-            capturesDir: getSessionCapturesDir(sessionId),
-            recordedAgentName: agentId,
-          }
-        : undefined;
+      // Trajectory-capture: pass the RAW override; the infra layer is the
+      // single place that resolves it against userConfig. Writer is only
+      // constructed when enabled — zero cost when disabled. See
+      // docs/designs/mitm-token-trajectory-capture.md §10.
       infra = await createDockerInfrastructure(
         sessionConfig.config,
         { kind: 'docker', agent: agentId },
@@ -305,7 +298,11 @@ async function createDockerSession(
         undefined,
         undefined,
         sessionConfig.resolvedSkills,
-        captureOptions,
+        {
+          override: options.captureTracesOverride,
+          capturesDir: getSessionCapturesDir(sessionId),
+          recordedAgentName: agentId,
+        },
       );
       // Standalone sessions use their bundle for the session's entire
       // lifetime; pin the token-stream routing ID to this session's ID.
